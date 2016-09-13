@@ -5,13 +5,37 @@ var Q = require('q');
 var app = module.exports = express();
 
 var CONFIG = {
-  ENDPOINT: 'https://federicoelles.github.io/familynavi/briefkasten/', //+ <cityid> + filename
+  ENDPOINT: 'https://federicoelles.github.io/familynavi/', //+ <cityid> + filename
   API: 'https://api.github.com/repos/federicoelles/familynavi/contents/briefkasten/' //+ <cityid>
 };
 
 
-//fetch directory listing in github
+//fetch file from github
+function getFileFromGithub(path, id, type){
+  var deferred = Q.defer();
+  
+  var r = {
+    id: id,
+    type: type
+  };
+  
+  rp(CONFIG.ENDPOINT + path).then(function (htmlString) {
+        if (r.type === 'json'){
+          r.data = JSON.parse(htmlString);
+        } else {
+          r.data = htmlString;
+        }
+        deferred.resolve(r);
+    })
+    .catch(function (err) {
+         deferred.reject(err);
+    });
+  return deferred.promise;  
+}
 
+
+
+//fetch directory listing in github
 function getBriefeForCity(city){
   var deferred = Q.defer();
   
@@ -26,6 +50,9 @@ function getBriefeForCity(city){
         var json = JSON.parse(htmlString);
         
         var briefe = {};
+        var promises = [];
+        
+        //extract paths to fetch data
         json.forEach(function(rec){
           
           var info = rec.name.split('.');
@@ -44,10 +71,39 @@ function getBriefeForCity(city){
              
             }
             briefe[id].paths[type] = rec.path;
+            
+            promises.push(getFileFromGithub(rec.path, id, type));
           }
         });
         
-        deferred.resolve(briefe);
+        //fetch all contents
+        Q.allSettled(promises)
+        .then(function (results) {
+            results.forEach(function (result) {
+                if (result.state === "fulfilled") {
+                    var value = result.value;
+                    //console.log('result', value);
+                    briefe[value.id][value.type] = value.data;
+                } else {
+                    var reason = result.reason;
+                }
+            });
+            
+            //quality check && clear paths
+             for (var x in briefe){
+               var brief = briefe[x];
+              
+               if (brief.json && brief.md){
+                 delete brief.paths;
+               } else {
+                 briefe[x] = undefined;
+               }
+             }
+            
+            deferred.resolve(briefe);
+        });
+        
+        
     })
     .catch(function (err) {
         // Crawling failed... 
